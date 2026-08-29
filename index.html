@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Share Center</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #080b18, #17134a, #081f2e);
+      color: white;
+      min-height: 100vh;
+    }
+
+    .container {
+      width: min(92%, 700px);
+      margin: auto;
+      padding: 35px 0;
+    }
+
+    .card {
+      background: rgba(255,255,255,.08);
+      border: 1px solid rgba(255,255,255,.15);
+      backdrop-filter: blur(18px);
+      border-radius: 25px;
+      padding: 25px;
+      margin-bottom: 20px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.35);
+    }
+
+    h1 {
+      margin-top: 0;
+      font-size: 32px;
+    }
+
+    .subtitle {
+      color: #c8c8d8;
+      line-height: 1.6;
+    }
+
+    button {
+      width: 100%;
+      border: 0;
+      padding: 15px;
+      margin-top: 12px;
+      border-radius: 14px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      background: linear-gradient(90deg, #7c4dff, #00c6ff);
+      color: white;
+    }
+
+    button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    video, img {
+      width: 100%;
+      border-radius: 16px;
+      margin-top: 15px;
+    }
+
+    .status {
+      padding: 14px;
+      border-radius: 12px;
+      background: rgba(0,0,0,.25);
+      margin-top: 15px;
+      color: #dce7ff;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .permission {
+      display: flex;
+      gap: 15px;
+      align-items: center;
+      padding: 15px;
+      background: rgba(255,255,255,.06);
+      border-radius: 15px;
+      margin: 12px 0;
+    }
+
+    .icon {
+      font-size: 28px;
+    }
+
+    small {
+      color: #aaa;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="container">
+
+  <div class="card">
+    <h1>✨ Share Center</h1>
+
+    <p class="subtitle">
+      This page can request your location and camera permission.
+      Your information will only be shared after you give permission
+      and perform the requested action.
+    </p>
+
+    <div class="permission">
+      <div class="icon">📍</div>
+      <div>
+        <b>Location</b><br>
+        <small>Your browser will ask for permission.</small>
+      </div>
+    </div>
+
+    <div class="permission">
+      <div class="icon">📷</div>
+      <div>
+        <b>Camera</b><br>
+        <small>You choose when to capture a photo/video.</small>
+      </div>
+    </div>
+
+    <button onclick="requestLocation()">
+      📍 Share My Location
+    </button>
+
+    <button onclick="startCamera()">
+      📷 Open Camera
+    </button>
+
+    <div id="status" class="status">
+      Waiting for your action...
+    </div>
+  </div>
+
+
+  <div id="cameraBox" class="card hidden">
+
+    <h2>📷 Camera</h2>
+
+    <video id="camera" autoplay playsinline></video>
+
+    <button onclick="takePhoto()">
+      📸 Capture Photo
+    </button>
+
+    <button onclick="startRecording()">
+      🎥 Start Video Recording
+    </button>
+
+    <button onclick="stopRecording()" id="stopBtn" disabled>
+      ⏹ Stop Recording
+    </button>
+
+    <canvas id="canvas" class="hidden"></canvas>
+
+    <div id="preview"></div>
+
+    <button id="uploadBtn" class="hidden" onclick="uploadMedia()">
+      ☁️ Upload Selected Media
+    </button>
+
+  </div>
+
+</div>
+
+
+<script>
+
+let stream = null;
+let selectedBlob = null;
+let mediaRecorder = null;
+let chunks = [];
+
+const statusBox = document.getElementById("status");
+
+function status(message) {
+  statusBox.innerText = message;
+}
+
+
+// ---------------- LOCATION ----------------
+
+function requestLocation() {
+
+  if (!navigator.geolocation) {
+    status("❌ Geolocation is not supported by this browser.");
+    return;
+  }
+
+  status("📍 Requesting location permission...");
+
+  navigator.geolocation.getCurrentPosition(
+    async position => {
+
+      const latitude = position.coords.latitude;
+      const longitude = position.coords.longitude;
+      const accuracy = position.coords.accuracy;
+
+      status(
+        `✅ Location permission granted.\n` +
+        `Latitude: ${latitude}\n` +
+        `Longitude: ${longitude}\n` +
+        `Accuracy: ${Math.round(accuracy)}m`
+      );
+
+      try {
+
+        const response = await fetch("/api/location", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            latitude,
+            longitude,
+            accuracy
+          })
+        });
+
+        if (response.ok) {
+          statusBox.innerText += "\n\n☁️ Location shared successfully.";
+        } else {
+          statusBox.innerText += "\n\n⚠️ Server could not save location.";
+        }
+
+      } catch (error) {
+        statusBox.innerText += "\n\n⚠️ Could not connect to server.";
+      }
+
+    },
+
+    error => {
+
+      if (error.code === 1) {
+        status("❌ Location permission was denied.");
+      } else {
+        status("❌ Unable to obtain your location.");
+      }
+
+    },
+
+    {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0
+    }
+  );
+}
+
+
+// ---------------- CAMERA ----------------
+
+async function startCamera() {
+
+  try {
+
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: true
+    });
+
+    document.getElementById("camera").srcObject = stream;
+    document.getElementById("cameraBox").classList.remove("hidden");
+
+    status("✅ Camera permission granted.");
+
+  } catch (error) {
+
+    status(
+      "❌ Camera permission was denied or camera is unavailable."
+    );
+
+  }
+}
+
+
+// ---------------- PHOTO ----------------
+
+function takePhoto() {
+
+  if (!stream) {
+    status("Open the camera first.");
+    return;
+  }
+
+  const video = document.getElementById("camera");
+  const canvas = document.getElementById("canvas");
+
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  const ctx = canvas.getContext("2d");
+
+  ctx.drawImage(
+    video,
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
+
+  canvas.toBlob(blob => {
+
+    selectedBlob = blob;
+
+    const imageURL = URL.createObjectURL(blob);
+
+    document.getElementById("preview").innerHTML =
+      `<img src="${imageURL}" alt="Captured photo">`;
+
+    document
+      .getElementById("uploadBtn")
+      .classList.remove("hidden");
+
+    status("📸 Photo captured. Press Upload to send it.");
+
+  }, "image/jpeg", .90);
+}
+
+
+// ---------------- VIDEO ----------------
+
+function startRecording() {
+
+  if (!stream) {
+    status("Open the camera first.");
+    return;
+  }
+
+  chunks = [];
+
+  mediaRecorder = new MediaRecorder(stream);
+
+  mediaRecorder.ondataavailable = event => {
+
+    if (event.data.size > 0) {
+      chunks.push(event.data);
+    }
+
+  };
+
+  mediaRecorder.onstop = () => {
+
+    selectedBlob = new Blob(
+      chunks,
+      { type: "video/webm" }
+    );
+
+    const videoURL = URL.createObjectURL(selectedBlob);
+
+    document.getElementById("preview").innerHTML =
+      `<video src="${videoURL}" controls></video>`;
+
+    document
+      .getElementById("uploadBtn")
+      .classList.remove("hidden");
+
+    status("🎥 Video recorded. Press Upload to send it.");
+
+  };
+
+  mediaRecorder.start();
+
+  document.getElementById("stopBtn").disabled = false;
+
+  status("🔴 Recording...");
+
+}
+
+
+function stopRecording() {
+
+  if (
+    mediaRecorder &&
+    mediaRecorder.state !== "inactive"
+  ) {
+
+    mediaRecorder.stop();
+
+    document.getElementById("stopBtn").disabled = true;
+
+  }
+
+}
+
+
+// ---------------- UPLOAD ----------------
+
+async function uploadMedia() {
+
+  if (!selectedBlob) {
+    status("Nothing selected.");
+    return;
+  }
+
+  const formData = new FormData();
+
+  const extension =
+    selectedBlob.type.includes("video")
+      ? "webm"
+      : "jpg";
+
+  formData.append(
+    "file",
+    selectedBlob,
+    `media_${Date.now()}.${extension}`
+  );
+
+  status("☁️ Uploading...");
+
+  try {
+
+    const response = await fetch(
+      "/api/upload",
+      {
+        method: "POST",
+        body: formData
+      }
+    );
+
+    const result = await response.json();
+
+    if (response.ok) {
+
+      status(
+        "✅ Upload successful.\n" +
+        result.message
+      );
+
+    } else {
+
+      status(
+        "❌ Upload failed."
+      );
+
+    }
+
+  } catch (error) {
+
+    status(
+      "❌ Could not connect to server."
+    );
+
+  }
+
+}
+
+</script>
+
+</body>
+</html>
